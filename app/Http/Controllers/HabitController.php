@@ -15,40 +15,58 @@ class HabitController extends Controller
      */
     public function index(Request $request)
     {
-        $habits = $request->user()->habits()
-            ->with(['entries' => function ($query) {
-                $query->where('completed_at', '>=', Carbon::now()->subDays(30));
-            }])
-            ->when($request->filter === 'active', function ($query) {
-                return $query->active();
-            })
-            ->when($request->filter === 'inactive', function ($query) {
-                return $query->where('is_active', false);
-            })
-            ->orderBy('created_at', 'desc')
-            ->get()
-            ->map(function ($habit) {
-                return [
-                    'id' => $habit->id,
-                    'name' => $habit->name,
-                    'description' => $habit->description,
-                    'frequency' => $habit->frequency,
-                    'target_count' => $habit->target_count,
-                    'color' => $habit->color,
-                    'is_active' => $habit->is_active,
-                    'created_at' => $habit->created_at,
-                    'current_streak' => $habit->getCurrentStreak(),
-                    'weekly_completion' => $habit->getWeeklyCompletionPercentage(),
-                    'monthly_completion' => $habit->getMonthlyCompletionPercentage(),
-                    'completed_today' => $habit->isCompletedForDate(Carbon::today()),
-                    'today_entry' => $habit->getEntryForDate(Carbon::today()),
-                ];
-            });
+        try {
+            $habits = $request->user()->habits()
+                ->with(['entries' => function ($query) {
+                    $query->where('completed_at', '>=', Carbon::now()->subDays(30));
+                }])
+                ->when($request->filter === 'active', function ($query) {
+                    return $query->active();
+                })
+                ->when($request->filter === 'inactive', function ($query) {
+                    return $query->where('is_active', false);
+                })
+                ->orderBy('created_at', 'desc')
+                ->get()
+                ->map(function ($habit) {
+                    // Get today's entry
+                    $todayEntry = $habit->entries()
+                        ->where('completed_at', Carbon::today()->format('Y-m-d'))
+                        ->first();
+                    
+                    $completedToday = $todayEntry && $todayEntry->count >= $habit->target_count;
+                    
+                    return [
+                        'id' => $habit->id,
+                        'name' => $habit->name,
+                        'description' => $habit->description,
+                        'frequency' => $habit->frequency,
+                        'target_count' => $habit->target_count,
+                        'color' => $habit->color,
+                        'is_active' => $habit->is_active,
+                        'created_at' => $habit->created_at,
+                        'current_streak' => $this->calculateStreak($habit),
+                        'weekly_completion' => $this->calculateWeeklyCompletion($habit),
+                        'monthly_completion' => $this->calculateMonthlyCompletion($habit),
+                        'completed_today' => $completedToday,
+                        'today_entry' => $todayEntry,
+                    ];
+                });
 
-        return Inertia::render('Habits/Index', [
-            'habits' => $habits,
-            'filters' => $request->only(['filter'])
-        ]);
+            return Inertia::render('Habits/Index', [
+                'habits' => $habits,
+                'filters' => $request->only(['filter'])
+            ]);
+        } catch (\Exception $e) {
+            \Log::error('Error loading habits: ' . $e->getMessage());
+            
+            // Return empty habits if there's a database error
+            return Inertia::render('Habits/Index', [
+                'habits' => [],
+                'filters' => $request->only(['filter']),
+                'error' => 'Database tables not found. Please run migrations first.'
+            ]);
+        }
     }
 
     /**
@@ -96,7 +114,7 @@ class HabitController extends Controller
     /**
      * Remove the specified resource from storage.
      */
-    public function destroy(Habit $habit, Request $request)
+    public function destroy(Request $request, Habit $habit)
     {
         // Ensure the habit belongs to the authenticated user
         if ($habit->user_id !== $request->user()->id) {
@@ -113,44 +131,49 @@ class HabitController extends Controller
      */
     public function complete(Request $request, Habit $habit)
     {
-        // Ensure the habit belongs to the authenticated user
-        if ($habit->user_id !== $request->user()->id) {
-            abort(403);
-        }
+        try {
+            // Ensure the habit belongs to the authenticated user
+            if ($habit->user_id !== $request->user()->id) {
+                abort(403);
+            }
 
-        $validated = $request->validate([
-            'count' => 'sometimes|integer|min:1',
-            'notes' => 'nullable|string',
-            'date' => 'nullable|date'
-        ]);
-
-        $date = isset($validated['date']) ? $validated['date'] : Carbon::today()->format('Y-m-d');
-        $count = $validated['count'] ?? 1;
-
-        // Check if entry already exists for this date
-        $entry = HabitEntry::where('habit_id', $habit->id)
-            ->where('user_id', $request->user()->id)
-            ->where('completed_at', $date)
-            ->first();
-
-        if ($entry) {
-            // Update existing entry
-            $entry->update([
-                'count' => $entry->count + $count,
-                'notes' => $validated['notes'] ?? $entry->notes
+            $validated = $request->validate([
+                'count' => 'sometimes|integer|min:1',
+                'notes' => 'nullable|string',
+                'date' => 'nullable|date'
             ]);
-        } else {
-            // Create new entry
-            HabitEntry::create([
-                'habit_id' => $habit->id,
-                'user_id' => $request->user()->id,
-                'completed_at' => $date,
-                'count' => $count,
-                'notes' => $validated['notes'] ?? null
-            ]);
-        }
 
-        return redirect()->back()->with('success', 'Habit marked as completed!');
+            $date = $validated['date'] ?? Carbon::today()->format('Y-m-d');
+            $count = $validated['count'] ?? 1;
+
+            // Check if entry already exists for this date
+            $entry = HabitEntry::where('habit_id', $habit->id)
+                ->where('user_id', $request->user()->id)
+                ->where('completed_at', $date)
+                ->first();
+
+            if ($entry) {
+                // Update existing entry
+                $entry->update([
+                    'count' => $entry->count + $count,
+                    'notes' => $validated['notes'] ?? $entry->notes
+                ]);
+            } else {
+                // Create new entry
+                HabitEntry::create([
+                    'habit_id' => $habit->id,
+                    'user_id' => $request->user()->id,
+                    'completed_at' => $date,
+                    'count' => $count,
+                    'notes' => $validated['notes'] ?? null
+                ]);
+            }
+
+            return redirect()->back()->with('success', 'Habit marked as completed!');
+        } catch (\Exception $e) {
+            \Log::error('Error completing habit: ' . $e->getMessage());
+            return redirect()->back()->with('error', 'Failed to mark habit as completed. Please try again.');
+        }
     }
 
     /**
@@ -219,5 +242,90 @@ class HabitController extends Controller
         ];
 
         return response()->json($statistics);
+    }
+
+    /**
+     * Calculate streak for a habit
+     */
+    private function calculateStreak($habit)
+    {
+        try {
+            $streak = 0;
+            $currentDate = Carbon::today();
+            
+            while (true) {
+                $entry = $habit->entries()
+                    ->where('completed_at', $currentDate->format('Y-m-d'))
+                    ->first();
+                    
+                if ($entry && $entry->count >= $habit->target_count) {
+                    $streak++;
+                    $currentDate->subDay();
+                } else {
+                    break;
+                }
+            }
+            
+            return $streak;
+        } catch (\Exception $e) {
+            return 0;
+        }
+    }
+
+    /**
+     * Calculate weekly completion percentage
+     */
+    private function calculateWeeklyCompletion($habit)
+    {
+        try {
+            $startOfWeek = Carbon::now()->startOfWeek();
+            $completedDays = 0;
+            $totalDays = 0;
+            
+            for ($i = 0; $i < 7; $i++) {
+                $date = $startOfWeek->copy()->addDays($i);
+                if ($date->lte(Carbon::today())) {
+                    $totalDays++;
+                    $entry = $habit->entries()
+                        ->where('completed_at', $date->format('Y-m-d'))
+                        ->first();
+                    if ($entry && $entry->count >= $habit->target_count) {
+                        $completedDays++;
+                    }
+                }
+            }
+            
+            return $totalDays > 0 ? round(($completedDays / $totalDays) * 100) : 0;
+        } catch (\Exception $e) {
+            return 0;
+        }
+    }
+
+    /**
+     * Calculate monthly completion percentage
+     */
+    private function calculateMonthlyCompletion($habit)
+    {
+        try {
+            $startOfMonth = Carbon::now()->startOfMonth();
+            $completedDays = 0;
+            $totalDays = 0;
+            
+            $currentDate = $startOfMonth->copy();
+            while ($currentDate->lte(Carbon::today()) && $currentDate->month === Carbon::now()->month) {
+                $totalDays++;
+                $entry = $habit->entries()
+                    ->where('completed_at', $currentDate->format('Y-m-d'))
+                    ->first();
+                if ($entry && $entry->count >= $habit->target_count) {
+                    $completedDays++;
+                }
+                $currentDate->addDay();
+            }
+            
+            return $totalDays > 0 ? round(($completedDays / $totalDays) * 100) : 0;
+        } catch (\Exception $e) {
+            return 0;
+        }
     }
 }

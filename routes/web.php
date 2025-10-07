@@ -3,6 +3,7 @@
 use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\TodoController;
 use App\Http\Controllers\HabitController;
+use App\Http\Controllers\CalendarController;
 use Illuminate\Foundation\Application;
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
@@ -40,6 +41,16 @@ Route::middleware('auth')->group(function () {
     Route::post('/habits/{habit}/complete', [HabitController::class, 'complete'])->name('habits.complete');
     Route::delete('/habits/{habit}/uncomplete', [HabitController::class, 'uncomplete'])->name('habits.uncomplete');
     Route::get('/habits/{habit}/statistics', [HabitController::class, 'statistics'])->name('habits.statistics');
+    
+    // Calendar routes
+    Route::get('/calendar', [CalendarController::class, 'index'])->name('calendar.index');
+    Route::post('/calendar/tasks', [CalendarController::class, 'store'])->name('calendar.tasks.store');
+    Route::patch('/calendar/tasks/{task}', [CalendarController::class, 'update'])->name('calendar.tasks.update');
+    Route::delete('/calendar/tasks/{task}', [CalendarController::class, 'destroy'])->name('calendar.tasks.destroy');
+    Route::patch('/calendar/tasks/{task}/toggle', [CalendarController::class, 'toggleComplete'])->name('calendar.tasks.toggle');
+    Route::get('/calendar/tasks/{date}', [CalendarController::class, 'getTasksForDate'])->name('calendar.tasks.date');
+    Route::post('/calendar/goals', [CalendarController::class, 'storeGoal'])->name('calendar.goals.store');
+    Route::get('/calendar/stats', [CalendarController::class, 'getStats'])->name('calendar.stats');
 });
 
 require __DIR__.'/auth.php';

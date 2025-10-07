@@ -47,8 +47,9 @@ class Habit extends Model
     // Get entries for a specific date
     public function getEntryForDate($date)
     {
+        $dateString = $date instanceof Carbon ? $date->format('Y-m-d') : Carbon::parse($date)->format('Y-m-d');
         return $this->entries()
-            ->where('completed_at', Carbon::parse($date)->format('Y-m-d'))
+            ->where('completed_at', $dateString)
             ->first();
     }
 

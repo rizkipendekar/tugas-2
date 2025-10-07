@@ -40,6 +40,12 @@ const showingNavigationDropdown = ref(false);
                                     Dashboard
                                 </NavLink>
                                 <NavLink
+                                    :href="route('calendar.index')"
+                                    :active="route().current('calendar.*')"
+                                >
+                                    Calendar
+                                </NavLink>
+                                <NavLink
                                     :href="route('todos.index')"
                                     :active="route().current('todos.*')"
                                 >
@@ -157,6 +163,12 @@ const showingNavigationDropdown = ref(false);
                             :active="route().current('dashboard')"
                         >
                             Dashboard
+                        </ResponsiveNavLink>
+                        <ResponsiveNavLink
+                            :href="route('calendar.index')"
+                            :active="route().current('calendar.*')"
+                        >
+                            Calendar
                         </ResponsiveNavLink>
                         <ResponsiveNavLink
                             :href="route('todos.index')"
